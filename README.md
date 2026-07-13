@@ -40,10 +40,25 @@ JC_MONITOR_URL=https://monitor.jcsystems.com/api/heartbeat
 JC_MONITOR_TOKEN=<el mismo INGEST_TOKEN de arriba>
 JC_CLIENTE_NOMBRE=Farmacia La Salud
 JC_MONITOR_INTERVAL_MIN=15
+# Dirección de esta máquina en la VPN (NetBird/Tailscale). Habilita el botón
+# "Abrir panel" del monitor para entrar al panel de este cliente por la VPN.
+JC_VPN_ADDR=100.92.10.5
 ```
 
 Reinicia la API del cliente. A los pocos minutos aparece en el panel.
 Sin `JC_MONITOR_URL`, el cliente no reporta nada (opt-in).
+
+### Abrir el panel de un cliente por VPN
+
+Si cada máquina de cliente y este servidor están en la misma **VPN mesh**
+(NetBird / Tailscale), poné en cada cliente su dirección VPN en `JC_VPN_ADDR`.
+El monitor muestra un botón **"↗ Abrir"** que lleva a `http://<vpn_addr>:8085/admin`
+(requiere que tu navegador también esté en la VPN).
+
+> Próximo paso (proxy elegante): un subdominio por cliente
+> (`<cliente>.panel.jcsystemsve.com`) que el VPS proxea al panel del cliente por
+> la VPN — así no necesitás el navegador en la VPN ni ver IPs. Se activa cuando
+> NetBird esté montado.
 
 ## 3. Usar el panel
 

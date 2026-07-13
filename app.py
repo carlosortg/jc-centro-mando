@@ -71,9 +71,17 @@ def init_db():
                 num_facturas  INTEGER,
                 num_pedidos   INTEGER,
                 first_seen    TEXT,
-                last_seen     TEXT
+                last_seen     TEXT,
+                vpn_addr      TEXT
             )
         """)
+        # Columna nueva idempotente (para bases ya creadas)
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(deployments)").fetchall()]
+            if "vpn_addr" not in cols:
+                conn.execute("ALTER TABLE deployments ADD COLUMN vpn_addr TEXT")
+        except Exception:
+            pass
         conn.commit()
 
 
@@ -112,6 +120,7 @@ class Heartbeat(BaseModel):
     ventas_dia: Optional[float] = None
     num_facturas: Optional[int] = None
     num_pedidos: Optional[int] = None
+    vpn_addr: str = ""
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -130,8 +139,8 @@ def receive_heartbeat(hb: Heartbeat, _: bool = Depends(require_ingest_token)):
             INSERT INTO deployments
                 (deployment_id, cliente, empresa_id, app_version, api_version,
                  db_status, hostname, ventas_dia, num_facturas, num_pedidos,
-                 first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 first_seen, last_seen, vpn_addr)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(deployment_id) DO UPDATE SET
                 cliente=excluded.cliente,
                 empresa_id=excluded.empresa_id,
@@ -142,10 +151,11 @@ def receive_heartbeat(hb: Heartbeat, _: bool = Depends(require_ingest_token)):
                 ventas_dia=excluded.ventas_dia,
                 num_facturas=excluded.num_facturas,
                 num_pedidos=excluded.num_pedidos,
-                last_seen=excluded.last_seen
+                last_seen=excluded.last_seen,
+                vpn_addr=excluded.vpn_addr
         """, (hb.deployment_id.strip(), hb.cliente, hb.empresa_id, hb.app_version,
               hb.api_version, hb.db_status, hb.hostname, hb.ventas_dia,
-              hb.num_facturas, hb.num_pedidos, now, now))
+              hb.num_facturas, hb.num_pedidos, now, now, hb.vpn_addr))
         conn.commit()
     return {"status": "ok"}
 
@@ -188,6 +198,10 @@ def list_deployments(_: str = Depends(require_admin)):
         r["mins_since"] = round(mins, 1) if mins is not None else None
         r["online"] = (mins is not None and mins <= OFFLINE_AFTER_MIN)
         r["outdated"] = (latest is not None and _version_tuple(r.get("app_version")) < latest)
+        # URL para abrir el panel del cliente por la VPN (directo por ahora;
+        # cuando esté el proxy por subdominio se reemplaza acá).
+        va = (r.get("vpn_addr") or "").strip()
+        r["panel_url"] = f"http://{va}:8085/admin" if va else ""
         if r["online"]:
             online_count += 1
     return JSONResponse({
@@ -254,9 +268,9 @@ _DASHBOARD_HTML = """<!doctype html>
     <thead><tr>
       <th>Estado</th><th>Cliente</th><th>Empresa</th><th>Versión</th><th>BD</th>
       <th class="num">Ventas hoy</th><th class="num">Facturas</th><th class="num">Pedidos</th>
-      <th>Host</th><th>Últ. reporte</th>
+      <th>Host</th><th>Últ. reporte</th><th>Panel</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="10" class="empty">Cargando…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="11" class="empty">Cargando…</td></tr></tbody>
   </table>
 </main>
 <footer>Se actualiza cada 30s · offline = sin reportar en <span id="f-off">–</span> min · JC Systems / Axia Core de Venezuela</footer>
@@ -267,7 +281,7 @@ function fmtMins(m){ if(m==null) return '—'; if(m<1) return 'hace segundos'; i
 async function load(){
   try{
     const r = await fetch('/api/deployments', {cache:'no-store'});
-    if(!r.ok){ document.getElementById('rows').innerHTML='<tr><td colspan="10" class="empty">Error '+r.status+'</td></tr>'; return; }
+    if(!r.ok){ document.getElementById('rows').innerHTML='<tr><td colspan="11" class="empty">Error '+r.status+'</td></tr>'; return; }
     const d = await r.json();
     document.getElementById('s-online').textContent = d.online;
     document.getElementById('s-offline').textContent = d.offline;
@@ -276,7 +290,7 @@ async function load(){
     document.getElementById('f-off').textContent = d.offline_after_min;
     document.getElementById('s-updated').textContent = 'act. ' + new Date(d.generated_at).toLocaleTimeString('es-VE');
     const tb = document.getElementById('rows');
-    if(!d.deployments.length){ tb.innerHTML='<tr><td colspan="10" class="empty">Aún no hay clientes reportando. Configura JC_MONITOR_URL en cada despliegue.</td></tr>'; return; }
+    if(!d.deployments.length){ tb.innerHTML='<tr><td colspan="11" class="empty">Aún no hay clientes reportando. Configura JC_MONITOR_URL en cada despliegue.</td></tr>'; return; }
     tb.innerHTML = d.deployments.map(x=>{
       const est = x.online ? '<span class="badge b-ok">● online</span>' : '<span class="badge b-off">● offline</span>';
       const dbok = (x.db_status==='ok');
@@ -293,6 +307,7 @@ async function load(){
         + '<td class="num">'+(x.num_pedidos??'—')+'</td>'
         + '<td class="mut">'+(x.hostname||'—')+'</td>'
         + '<td class="mut">'+fmtMins(x.mins_since)+'</td>'
+        + '<td>'+(x.panel_url ? '<a class="badge b-ok" style="text-decoration:none" target="_blank" href="'+x.panel_url+'">↗ Abrir</a>' : '<span class="mut" style="font-size:10px">sin VPN</span>')+'</td>'
         + '</tr>';
     }).join('');
   }catch(e){ console.error(e); }
