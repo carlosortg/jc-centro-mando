@@ -1,0 +1,13 @@
+# Datos y entorno (nunca subir)
+.env
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
